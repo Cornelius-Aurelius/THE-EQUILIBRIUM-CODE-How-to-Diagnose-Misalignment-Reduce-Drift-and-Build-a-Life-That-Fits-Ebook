@@ -184,6 +184,11 @@
       border-color: transparent;
       box-shadow: 0 10px 30px rgba(0, 229, 255, .18);
     }
+    button[aria-pressed="true"] {
+      border-color: color-mix(in srgb, var(--accent) 74%, white 8%);
+      background: rgba(0, 229, 255, .14);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+    }
 
     .hero {
       width: min(1180px, calc(100% - 2rem));
@@ -3428,127 +3433,254 @@ Number:</p>
 
   <script>
     (function () {
+      'use strict';
+
       const root = document.documentElement;
       const progress = document.getElementById('progress');
       const currentYear = document.getElementById('year');
-      currentYear.textContent = new Date().getFullYear();
-
-      const storedTheme = localStorage.getItem('equilibrium-theme');
-      const storedWidth = localStorage.getItem('equilibrium-width');
-      const storedFont = localStorage.getItem('equilibrium-font');
-      if (storedTheme) root.dataset.theme = storedTheme;
-      if (storedWidth) root.dataset.width = storedWidth;
-      if (storedFont) {
-        root.dataset.font = storedFont;
-        root.style.setProperty('--reader-font', storedFont + 'px');
-      }
-
-      document.querySelectorAll('[data-theme-btn]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          root.dataset.theme = btn.dataset.themeBtn;
-          localStorage.setItem('equilibrium-theme', btn.dataset.themeBtn);
-        });
-      });
-      document.querySelectorAll('[data-width-btn]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          root.dataset.width = btn.dataset.widthBtn;
-          localStorage.setItem('equilibrium-width', btn.dataset.widthBtn);
-        });
-      });
-      function setFont(next) {
-        const size = Math.max(16, Math.min(24, next));
-        root.dataset.font = String(size);
-        root.style.setProperty('--reader-font', size + 'px');
-        localStorage.setItem('equilibrium-font', String(size));
-      }
-      document.getElementById('fontDown').addEventListener('click', () => setFont((parseInt(root.dataset.font || '18', 10)) - 1));
-      document.getElementById('fontUp').addEventListener('click', () => setFont((parseInt(root.dataset.font || '18', 10)) + 1));
-
-      function updateProgress() {
-        const scrollTop = window.scrollY || document.documentElement.scrollTop;
-        const height = document.documentElement.scrollHeight - window.innerHeight;
-        const pct = height > 0 ? (scrollTop / height) * 100 : 0;
-        progress.style.width = Math.min(100, Math.max(0, pct)) + '%';
-      }
-      document.addEventListener('scroll', updateProgress, { passive: true });
-      updateProgress();
-
-      const pageUrl = () => window.location.href.split('#')[0];
+      const canonical = document.querySelector('link[rel="canonical"]');
+      const canonicalUrl = canonical ? canonical.href : window.location.href.split('#')[0];
       const shareTitle = 'The Equilibrium Code — How to Diagnose Misalignment, Reduce Drift, and Build a Life That Fits';
       const shareText = 'Read The Equilibrium Code by Cornelius Aurelius: a practical ebook for diagnosing misalignment, reducing drift, and building a life that fits.';
+
+      function byId(id) {
+        return document.getElementById(id);
+      }
+
+      function safeGet(key) {
+        try { return window.localStorage.getItem(key); } catch (error) { return null; }
+      }
+
+      function safeSet(key, value) {
+        try { window.localStorage.setItem(key, value); } catch (error) {}
+      }
+
+      function safeRemove(key) {
+        try { window.localStorage.removeItem(key); } catch (error) {}
+      }
+
+      function pageUrl() {
+        const liveUrl = window.location.href.split('#')[0];
+        return liveUrl && !liveUrl.startsWith('file:') ? liveUrl : canonicalUrl;
+      }
+
+      function setButtonState(selector, activeValue, dataName) {
+        document.querySelectorAll(selector).forEach((button) => {
+          const value = button.dataset[dataName];
+          button.setAttribute('aria-pressed', value === activeValue ? 'true' : 'false');
+        });
+      }
+
+      function flash(button, message) {
+        if (!button) return;
+        const oldText = button.dataset.originalText || button.textContent;
+        button.dataset.originalText = oldText;
+        button.textContent = message;
+        window.clearTimeout(button._flashTimer);
+        button._flashTimer = window.setTimeout(() => {
+          button.textContent = oldText;
+        }, 1400);
+      }
+
+      function fallbackCopy(text, button) {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.left = '-9999px';
+        area.style.top = '0';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+        document.body.removeChild(area);
+        if (copied) {
+          flash(button, 'Copied');
+        } else {
+          window.prompt('Copy this text:', text);
+          flash(button, 'Copy ready');
+        }
+      }
+
+      async function copyText(text, button) {
+        const raw = String(text || '').trimEnd();
+        const finalText = /Read The Equilibrium Code:\s*$/i.test(raw) ? raw + ' ' + pageUrl() : raw;
+        try {
+          if (!navigator.clipboard || !window.isSecureContext) throw new Error('Clipboard API unavailable');
+          await navigator.clipboard.writeText(finalText);
+          flash(button, 'Copied');
+        } catch (error) {
+          fallbackCopy(finalText, button);
+        }
+      }
+
+      function applyTheme(theme) {
+        const value = ['neon', 'paper', 'contrast'].includes(theme) ? theme : 'neon';
+        root.dataset.theme = value;
+        safeSet('equilibrium-theme', value);
+        setButtonState('[data-theme-btn]', value, 'themeBtn');
+      }
+
+      function applyWidth(width) {
+        const value = ['narrow', 'standard', 'wide'].includes(width) ? width : 'standard';
+        root.dataset.width = value;
+        safeSet('equilibrium-width', value);
+        setButtonState('[data-width-btn]', value, 'widthBtn');
+      }
+
+      function applyFont(size) {
+        const value = Math.max(16, Math.min(24, Number(size) || 18));
+        root.dataset.font = String(value);
+        root.style.setProperty('--reader-font', value + 'px');
+        safeSet('equilibrium-font', String(value));
+      }
+
+      if (currentYear) currentYear.textContent = new Date().getFullYear();
+      applyTheme(safeGet('equilibrium-theme') || root.dataset.theme || 'neon');
+      applyWidth(safeGet('equilibrium-width') || root.dataset.width || 'standard');
+      applyFont(safeGet('equilibrium-font') || root.dataset.font || '18');
+
+      document.querySelectorAll('[data-theme-btn]').forEach((button) => {
+        button.addEventListener('click', () => applyTheme(button.dataset.themeBtn));
+      });
+
+      document.querySelectorAll('[data-width-btn]').forEach((button) => {
+        button.addEventListener('click', () => applyWidth(button.dataset.widthBtn));
+      });
+
+      const fontDown = byId('fontDown');
+      const fontUp = byId('fontUp');
+      if (fontDown) fontDown.addEventListener('click', () => applyFont((parseInt(root.dataset.font || '18', 10)) - 1));
+      if (fontUp) fontUp.addEventListener('click', () => applyFont((parseInt(root.dataset.font || '18', 10)) + 1));
+
+      function updateProgress() {
+        if (!progress) return;
+        const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+        const height = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        const percentage = Math.min(100, Math.max(0, (scrollTop / height) * 100));
+        progress.style.width = percentage + '%';
+      }
+      document.addEventListener('scroll', updateProgress, { passive: true });
+      window.addEventListener('resize', updateProgress);
+      updateProgress();
+
       function setShareLinks() {
         const url = encodeURIComponent(pageUrl());
         const text = encodeURIComponent(shareText);
         const title = encodeURIComponent(shareTitle);
-        const map = {
+        const links = {
           x: 'https://twitter.com/intent/tweet?text=' + text + '&url=' + url,
           facebook: 'https://www.facebook.com/sharer/sharer.php?u=' + url,
           linkedin: 'https://www.linkedin.com/sharing/share-offsite/?url=' + url,
           whatsapp: 'https://wa.me/?text=' + text + '%20' + url,
           email: 'mailto:?subject=' + title + '&body=' + text + '%0A%0A' + url
         };
-        document.querySelectorAll('[data-share-link]').forEach(link => {
-          link.href = map[link.dataset.shareLink];
+
+        document.querySelectorAll('[data-share-link]').forEach((link) => {
+          const target = links[link.dataset.shareLink];
+          if (target) link.href = target;
         });
       }
       setShareLinks();
 
-      async function copyText(text, btn) {
-        const finalText = text.endsWith(': ') ? text + pageUrl() : text;
-        try {
-          await navigator.clipboard.writeText(finalText);
-          const old = btn.textContent;
-          btn.textContent = 'Copied';
-          setTimeout(() => btn.textContent = old, 1400);
-        } catch (e) {
-          window.prompt('Copy this text:', finalText);
-        }
+      const copyPageLink = byId('copyPageLink');
+      if (copyPageLink) copyPageLink.addEventListener('click', (event) => copyText(pageUrl(), event.currentTarget));
+
+      document.querySelectorAll('[data-copy]').forEach((button) => {
+        button.addEventListener('click', () => copyText(button.dataset.copy || '', button));
+      });
+
+      const nativeShare = byId('nativeShare');
+      if (nativeShare) {
+        nativeShare.addEventListener('click', async () => {
+          if (navigator.share) {
+            try {
+              await navigator.share({ title: shareTitle, text: shareText, url: pageUrl() });
+              flash(nativeShare, 'Shared');
+            } catch (error) {
+              if (error && error.name !== 'AbortError') await copyText(pageUrl(), nativeShare);
+            }
+          } else {
+            await copyText(pageUrl(), nativeShare);
+          }
+        });
       }
-      document.querySelectorAll('[data-copy]').forEach(btn => {
-        btn.addEventListener('click', () => copyText(btn.dataset.copy, btn));
-      });
-      document.getElementById('copyPageLink').addEventListener('click', (e) => copyText(pageUrl(), e.currentTarget));
-      document.getElementById('nativeShare').addEventListener('click', async () => {
-        if (navigator.share) {
-          try { await navigator.share({ title: shareTitle, text: shareText, url: pageUrl() }); } catch (e) {}
-        } else {
-          copyText(pageUrl(), document.getElementById('nativeShare'));
-        }
-      });
 
-      const notes = document.getElementById('readerNotes');
-      const notesEmail = document.getElementById('notesEmail');
-      notes.value = localStorage.getItem('equilibrium-private-notes') || '';
-      notes.addEventListener('input', () => localStorage.setItem('equilibrium-private-notes', notes.value));
-      document.getElementById('clearNotes').addEventListener('click', () => {
-        if (!notes.value || confirm('Clear your private notes from this device?')) {
-          notes.value = '';
-          localStorage.removeItem('equilibrium-private-notes');
-        }
-      });
-      document.getElementById('emailNotes').addEventListener('click', () => {
-        const body = notes.value.trim();
-        const subject = encodeURIComponent('My notes on The Equilibrium Code');
-        const noteBody = encodeURIComponent((body || 'My notes:') + '
+      const notes = byId('readerNotes');
+      const notesEmail = byId('notesEmail');
+      const clearNotes = byId('clearNotes');
+      const emailNotes = byId('emailNotes');
 
-Source: ' + pageUrl());
-        const target = notesEmail.value.trim();
-        window.location.href = 'mailto:' + target + '?subject=' + subject + '&body=' + noteBody;
+      if (notes) {
+        notes.value = safeGet('equilibrium-private-notes') || '';
+        notes.addEventListener('input', () => safeSet('equilibrium-private-notes', notes.value));
+      }
+
+      if (clearNotes && notes) {
+        clearNotes.addEventListener('click', () => {
+          if (!notes.value.trim() || window.confirm('Clear your private notes from this device?')) {
+            notes.value = '';
+            safeRemove('equilibrium-private-notes');
+            flash(clearNotes, 'Cleared');
+          }
+        });
+      }
+
+      function validEmail(value) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      }
+
+      if (emailNotes && notes) {
+        emailNotes.addEventListener('click', () => {
+          const target = notesEmail ? notesEmail.value.trim() : '';
+          if (target && !validEmail(target)) {
+            window.alert('Please enter a valid email address, or leave the email box empty to choose the recipient in your email app.');
+            if (notesEmail) notesEmail.focus();
+            return;
+          }
+
+          const body = notes.value.trim() || 'My notes:';
+          const subject = encodeURIComponent('My notes on The Equilibrium Code');
+          const sourceLine = '\n\nSource: ' + pageUrl();
+          const mailto = 'mailto:' + encodeURIComponent(target) + '?subject=' + subject + '&body=' + encodeURIComponent(body + sourceLine);
+
+          if (mailto.length > 1800) {
+            copyText(body + sourceLine, emailNotes);
+            window.alert('Your notes are long, so they were copied. Paste them into your email app to send them to yourself.');
+            return;
+          }
+
+          window.location.href = mailto;
+          flash(emailNotes, 'Email opened');
+        });
+      }
+
+      document.querySelectorAll('a[href^="#"]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          const hash = link.getAttribute('href');
+          if (!hash || hash === '#') return;
+          const target = document.querySelector(hash);
+          if (!target) return;
+          event.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.pushState(null, '', hash);
+        });
       });
 
       const headings = Array.from(document.querySelectorAll('.book-section[id]'));
-      const tocLinks = new Map(Array.from(document.querySelectorAll('.toc-list a')).map(a => [a.getAttribute('href').slice(1), a]));
-      if ('IntersectionObserver' in window) {
+      const tocLinks = new Map(Array.from(document.querySelectorAll('.toc-list a')).map((link) => [link.getAttribute('href').slice(1), link]));
+      if ('IntersectionObserver' in window && headings.length) {
         const observer = new IntersectionObserver((entries) => {
-          entries.forEach(entry => {
+          entries.forEach((entry) => {
             if (entry.isIntersecting) {
-              document.querySelectorAll('.toc-list a.active').forEach(a => a.classList.remove('active'));
+              document.querySelectorAll('.toc-list a.active').forEach((link) => link.classList.remove('active'));
               const link = tocLinks.get(entry.target.id);
               if (link) link.classList.add('active');
             }
           });
         }, { rootMargin: '-15% 0px -72% 0px', threshold: 0.01 });
-        headings.forEach(h => observer.observe(h));
+        headings.forEach((heading) => observer.observe(heading));
       }
     })();
   </script>
